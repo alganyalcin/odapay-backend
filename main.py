@@ -40,8 +40,10 @@ _processed_receipts: dict[str, ReceiptProcessResult] = {}
 @app.post("/receipts/process", response_model=ReceiptProcessResult)
 async def process_receipt(file: UploadFile = File(...)):
     """Market fişi fotoğrafını alır, OCR uygular ve kalemlere ayırır."""
-    if file.content_type not in ("image/jpeg", "image/png"):
-        raise HTTPException(400, "Sadece JPEG veya PNG kabul edilir")
+    # Android/iOS kameraları content_type'ı bazen boş veya farklı formatta gönderebiliyor,
+    # bu yüzden sadece açıkça 'image/' ile başlamayan durumları reddediyoruz
+    if file.content_type and not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Sadece resim dosyaları kabul edilir")
 
     image_bytes = await file.read()
 
