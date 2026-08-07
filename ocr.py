@@ -23,6 +23,7 @@ def extract_text_from_image(image_bytes: bytes) -> str:
             "apikey": OCR_SPACE_API_KEY,
             "language": "tur",
             "OCREngine": 2,  # daha yüksek doğruluklu motor
+            "isTable": "true",  # sütunları (ürün adı | KDV | fiyat) TAB ile ayırarak koru
         },
         timeout=30,
     )
