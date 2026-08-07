@@ -47,7 +47,11 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
     }
 
     response = requests.post(
-        f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+        GEMINI_URL,
+        headers={
+            "x-goog-api-key": GEMINI_API_KEY,
+            "Content-Type": "application/json",
+        },
         json=payload,
         timeout=30,
     )
