@@ -12,9 +12,8 @@ import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from models import ReceiptProcessResult, SplitRequest, SplitResult
-from ocr import extract_text_from_image
-from parser import parse_receipt_text, calculate_total
+from models import ReceiptItem, ReceiptProcessResult, SplitRequest, SplitResult
+from ai_extractor import extract_items_from_image
 from splitter import split_equal, split_by_item
 
 app = FastAPI(title="OdaPay API")
@@ -48,16 +47,23 @@ async def process_receipt(file: UploadFile = File(...)):
     image_bytes = await file.read()
 
     try:
-        raw_text = extract_text_from_image(image_bytes)
+        raw_items = extract_items_from_image(image_bytes)
     except Exception as e:
-        raise HTTPException(502, f"OCR servisi başarısız oldu: {e}")
+        raise HTTPException(502, f"Yapay zeka servisi başarısız oldu: {e}")
 
-    items = parse_receipt_text(raw_text)
-    total = calculate_total(items)
+    items = [
+        ReceiptItem(
+            item_name=str(entry.get("item_name", "")).strip(),
+            total_price=float(entry.get("total_price", 0) or 0),
+        )
+        for entry in raw_items
+        if str(entry.get("item_name", "")).strip()
+    ]
+    total = round(sum(item.total_price for item in items), 2)
 
     result = ReceiptProcessResult(
         receipt_id=str(uuid.uuid4()),
-        raw_text=raw_text,
+        raw_text="",  # artık kullanılmıyor, yapay zeka doğrudan yapılandırılmış veri döndürüyor
         items=items,
         total_amount=total,
         status="processed" if items else "needs_review",
