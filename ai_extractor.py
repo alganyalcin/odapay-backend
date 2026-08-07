@@ -43,7 +43,10 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
                 ]
             }
         ],
-        "generationConfig": {"response_mime_type": "application/json"},
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 4096,
+        },
     }
 
     response = requests.post(
@@ -60,8 +63,20 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
 
     try:
         text = result["candidates"][0]["content"]["parts"][0]["text"]
-        items = json.loads(text)
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
+    except (KeyError, IndexError) as e:
+        raise RuntimeError(f"Yapay zeka cevabı beklenmeyen formatta: {e}")
+
+    # Bazen model JSON'u ```json ... ``` bloğu içine sarabiliyor, temizle
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+
+    try:
+        items = json.loads(cleaned)
+    except json.JSONDecodeError as e:
         raise RuntimeError(f"Yapay zeka cevabı ayrıştırılamadı: {e}")
 
     if not isinstance(items, list):
