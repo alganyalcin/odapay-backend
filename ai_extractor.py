@@ -7,6 +7,7 @@ modeli kullanıyoruz; kırışık/bulanık fişlerde çok daha isabetli sonuç v
 """
 import os
 import json
+import time
 import base64
 import requests
 
@@ -20,18 +21,38 @@ PROMPT = """Bu bir market fişi fotoğrafı. Fişteki her ürünü ve o ürünü
 
 Kurallar:
 - Sadece gerçek ürün satırlarını al; başlık, KDV, toplam, kart bilgisi gibi satırları alma.
-- Fiyatları ondalık sayı (nokta ile) olarak ver, örn: 3.25
+- Fiyatları ondalık sayı olarak ver (nokta ile, örn: 3.25), asla metin/kesir olarak yazma.
+- Ürün adında çift tırnak (") karakteri kullanma.
 - Emin olamadığın bir ürünü de en iyi tahminle dahil et, atlama.
-- Sadece aşağıdaki JSON formatında cevap ver, başka hiçbir metin ekleme:
-[{"item_name": "...", "total_price": 0.00}, ...]
 """
 
+# Gemini'nin dönmesi gereken KESİN yapı - modelin serbest metin yazıp
+# bozuk JSON üretmesini büyük ölçüde engelliyor.
+RESPONSE_SCHEMA = {
+    "type": "ARRAY",
+    "items": {
+        "type": "OBJECT",
+        "properties": {
+            "item_name": {"type": "STRING"},
+            "total_price": {"type": "NUMBER"},
+        },
+        "required": ["item_name", "total_price"],
+    },
+}
 
-def extract_items_from_image(image_bytes: bytes) -> list[dict]:
-    """Fiş fotoğrafını Gemini'ye gönderir, ürün adı + fiyat listesini döndürür."""
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY ortam değişkeni ayarlanmamış")
 
+def _clean_json_text(text: str) -> str:
+    """Bazen model JSON'u ```json ... ``` bloğu içine sarabiliyor, temizler."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+    return cleaned
+
+
+def _call_gemini(image_bytes: bytes) -> list[dict]:
     encoded_image = base64.b64encode(image_bytes).decode("utf-8")
 
     payload = {
@@ -45,6 +66,8 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
         ],
         "generationConfig": {
             "responseMimeType": "application/json",
+            "responseSchema": RESPONSE_SCHEMA,
+            "temperature": 0,  # tutarlılık için rastgeleliği kapat
             "maxOutputTokens": 4096,
         },
     }
@@ -66,20 +89,31 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
     except (KeyError, IndexError) as e:
         raise RuntimeError(f"Yapay zeka cevabı beklenmeyen formatta: {e}")
 
-    # Bazen model JSON'u ```json ... ``` bloğu içine sarabiliyor, temizle
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:]
-        cleaned = cleaned.strip()
-
-    try:
-        items = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Yapay zeka cevabı ayrıştırılamadı: {e}")
+    cleaned = _clean_json_text(text)
+    items = json.loads(cleaned)  # burada hata olursa çağıran taraf yakalayıp tekrar dener
 
     if not isinstance(items, list):
         raise RuntimeError("Yapay zeka beklenmeyen bir format döndürdü")
 
     return items
+
+
+def extract_items_from_image(image_bytes: bytes) -> list[dict]:
+    """Fiş fotoğrafını Gemini'ye gönderir, ürün adı + fiyat listesini döndürür.
+
+    Ara sıra model geçersiz JSON üretebiliyor (nadir ama olabiliyor);
+    böyle bir durumda otomatik olarak bir kez daha deniyoruz.
+    """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY ortam değişkeni ayarlanmamış")
+
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            return _call_gemini(image_bytes)
+        except (json.JSONDecodeError, RuntimeError) as e:
+            last_error = e
+            time.sleep(0.5)
+            continue
+
+    raise RuntimeError(f"Yapay zeka cevabı ayrıştırılamadı (2 denemeden sonra): {last_error}")
