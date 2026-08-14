@@ -9,13 +9,14 @@ Uçlar:
   uvicorn main:app --reload
 """
 import uuid
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from models import ReceiptItem, ReceiptProcessResult, SplitRequest, SplitResult
 from ai_extractor import extract_items_from_image
 from splitter import split_equal, split_by_item
+from auth import verify_auth
 
 app = FastAPI(title="OdaPay API")
 
@@ -75,8 +76,8 @@ _processed_receipts: dict[str, ReceiptProcessResult] = {}
 
 
 @app.post("/receipts/process", response_model=ReceiptProcessResult)
-async def process_receipt(file: UploadFile = File(...)):
-    """Market fişi fotoğrafını alır, OCR uygular ve kalemlere ayırır."""
+async def process_receipt(file: UploadFile = File(...), user_id: str = Depends(verify_auth)):
+    """Market fişi fotoğrafını alır, OCR uygular ve kalemlere ayırır. Giriş yapmış kullanıcı gerektirir."""
     # Android/iOS kameraları content_type'ı bazen boş veya farklı formatta gönderebiliyor,
     # bu yüzden sadece açıkça 'image/' ile başlamayan durumları reddediyoruz
     if file.content_type and not file.content_type.startswith("image/"):
@@ -112,8 +113,8 @@ async def process_receipt(file: UploadFile = File(...)):
 
 
 @app.post("/expenses/split", response_model=SplitResult)
-async def split_expense(request: SplitRequest):
-    """İşlenmiş bir fişi ev arkadaşları arasında bölüştürüp harcama kaydı oluşturur."""
+async def split_expense(request: SplitRequest, user_id: str = Depends(verify_auth)):
+    """İşlenmiş bir fişi ev arkadaşları arasında bölüştürüp harcama kaydı oluşturur. Giriş yapmış kullanıcı gerektirir."""
     receipt = _processed_receipts.get(request.receipt_id)
     if not receipt:
         raise HTTPException(404, "Fiş bulunamadı, önce /receipts/process çağırın")
