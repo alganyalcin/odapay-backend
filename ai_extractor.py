@@ -79,7 +79,7 @@ def _call_gemini(image_bytes: bytes) -> list[dict]:
             "Content-Type": "application/json",
         },
         json=payload,
-        timeout=30,
+        timeout=55,  # Gemini bazen yoğunlukta yavaş cevap verebiliyor, pay bırakıyoruz
     )
     response.raise_for_status()
     result = response.json()
@@ -101,19 +101,20 @@ def _call_gemini(image_bytes: bytes) -> list[dict]:
 def extract_items_from_image(image_bytes: bytes) -> list[dict]:
     """Fiş fotoğrafını Gemini'ye gönderir, ürün adı + fiyat listesini döndürür.
 
-    Ara sıra model geçersiz JSON üretebiliyor (nadir ama olabiliyor);
-    böyle bir durumda otomatik olarak bir kez daha deniyoruz.
+    Ara sıra model geçersiz JSON üretebiliyor, ya da Google'ın sunucusu
+    yoğunlukta geç/zaman aşımına uğrayan bir cevap verebiliyor (nadir ama
+    olabiliyor); böyle durumlarda otomatik olarak bir kez daha deniyoruz.
     """
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY ortam değişkeni ayarlanmamış")
 
     last_error: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             return _call_gemini(image_bytes)
-        except (json.JSONDecodeError, RuntimeError) as e:
+        except (json.JSONDecodeError, RuntimeError, requests.exceptions.RequestException) as e:
             last_error = e
-            time.sleep(0.5)
+            time.sleep(1)
             continue
 
-    raise RuntimeError(f"Yapay zeka cevabı ayrıştırılamadı (2 denemeden sonra): {last_error}")
+    raise RuntimeError(f"Yapay zeka cevabı alınamadı (3 denemeden sonra): {last_error}")
