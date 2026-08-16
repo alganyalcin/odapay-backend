@@ -70,6 +70,41 @@ async def confirmed_page():
     </html>
     """
 
+
+@app.get("/account-deletion", response_class=HTMLResponse)
+async def account_deletion_page():
+    """Play Console 'Hesap silme URL'si' için - kullanıcıya silme adımlarını gösterir."""
+    return """
+    <!DOCTYPE html>
+    <html lang="tr">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>OdaPay - Hesap Silme</title>
+      <style>
+        body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #16241F; }
+        h1 { color: #12A184; }
+      </style>
+    </head>
+    <body>
+      <h1>Odapay Hesap ve Veri Silme Talebi</h1>
+      <p>Odapay hesabını ve ilişkili verilerini silmek istersen:</p>
+      <ol>
+        <li>Hesabına kayıtlı e-posta adresinden <b>odapaydestek@gmail.com</b> adresine bir e-posta gönder.</li>
+        <li>Konu satırına <b>"Hesap Silme Talebi"</b> yaz.</li>
+        <li>E-postanda, sildirmek istediğin hesabın kayıtlı e-posta adresini belirt.</li>
+      </ol>
+      <p>Talebini aldıktan sonra en geç <b>7 iş günü</b> içinde işleme alırız.</p>
+      <p><b>Silinecek veriler:</b> hesap bilgilerin (isim, e-posta), eklediğin harcamalar ve
+      harcama payları, oda üyelikleri ve tüketim malzemesi kayıtların.</p>
+      <p>Ev arkadaşlarınla paylaştığın harcama geçmişi, evin diğer üyelerinin kendi
+      kayıtlarını etkilememesi için sana ait kısmıyla sınırlı şekilde silinir. Teknik
+      yedeklerde veriler en fazla 30 gün daha kalabilir.</p>
+      <p>Sorular için: <b>odapaydestek@gmail.com</b></p>
+    </body>
+    </html>
+    """
+
 # NOT: Demo amaçlı bellek-içi depolama. Gerçek ortamda schema.sql'deki
 # receipts / receipt_items tablolarına yazılmalı (asyncpg ile).
 _processed_receipts: dict[str, ReceiptProcessResult] = {}
