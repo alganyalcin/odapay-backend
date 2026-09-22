@@ -12,6 +12,7 @@ import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.concurrency import run_in_threadpool
 
 from models import ReceiptItem, ReceiptProcessResult, SplitRequest, SplitResult
 from ai_extractor import extract_items_from_image
@@ -121,7 +122,7 @@ async def process_receipt(file: UploadFile = File(...), user_id: str = Depends(v
     image_bytes = await file.read()
 
     try:
-        raw_items = extract_items_from_image(image_bytes)
+        raw_items = await run_in_threadpool(extract_items_from_image, image_bytes)
     except Exception as e:
         raise HTTPException(502, f"Yapay zeka servisi başarısız oldu: {e}")
 
