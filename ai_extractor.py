@@ -14,6 +14,8 @@ import json
 import time
 import base64
 import requests
+from io import BytesIO
+from PIL import Image
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
@@ -52,10 +54,21 @@ RESPONSE_SCHEMA = {
     },
 }
 
+def _compress_image(image_bytes: bytes) -> bytes:
+    """Orijinal kamera fotoğrafını max 1024x1024 boyutuna ve %75 JPEG kalitesine düşürür."""
+    with Image.open(BytesIO(image_bytes)) as img:
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        
+        # En-boy oranını koruyarak maksimum 1024x1024'e sığdır
+        img.thumbnail((1024, 1024))
+        
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=75)
+        return out.getvalue()
 
 def _model_url(model: str) -> str:
     return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
 
 def _clean_json_text(text: str) -> str:
     """Bazen model JSON'u ```json ... ``` bloğu içine sarabiliyor, temizler."""
@@ -67,9 +80,10 @@ def _clean_json_text(text: str) -> str:
         cleaned = cleaned.strip()
     return cleaned
 
-
 def _call_gemini(image_bytes: bytes, model: str) -> list[dict]:
-    encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+    # Görseli Gemini'ye göndermeden ÖNCE sıkıştır
+    compressed_bytes = _compress_image(image_bytes)
+    encoded_image = base64.b64encode(compressed_bytes).decode("utf-8")
 
     payload = {
         "contents": [
@@ -83,7 +97,7 @@ def _call_gemini(image_bytes: bytes, model: str) -> list[dict]:
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": RESPONSE_SCHEMA,
-            "temperature": 0,  # tutarlılık için rastgeleliği kapat
+            "temperature": 0.2,  # Katı şema zorlamasındaki 503 riskini azaltmak için 0 yerine 0.2 yapıldı[cite: 4]
             "maxOutputTokens": 4096,
         },
     }
@@ -111,7 +125,6 @@ def _call_gemini(image_bytes: bytes, model: str) -> list[dict]:
         raise RuntimeError("Yapay zeka beklenmeyen bir format döndürdü")
     return items
 
-
 def extract_items_from_image(image_bytes: bytes) -> list[dict]:
     """Fiş fotoğrafını Gemini'ye gönderir, ürün adı + fiyat listesini döndürür.
 
@@ -132,13 +145,13 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
             last_error = e
             status = e.response.status_code if e.response is not None else None
             if status in RETRYABLE_STATUS:
-                time.sleep(1.5)
+                time.sleep(3)  # 1.5 saniyeden 3 saniyeye çıkarıldı[cite: 4]
                 continue
             # 400/401/403 gibi kalıcı hatalar: tekrar denemenin anlamı yok
             raise RuntimeError(f"Yapay zeka servisi hata döndürdü ({status}): {e}")
         except (json.JSONDecodeError, RuntimeError, requests.exceptions.RequestException) as e:
             last_error = e
-            time.sleep(1)
+            time.sleep(2)  # 1 saniyeden 2 saniyeye çıkarıldı[cite: 4]
             continue
 
     raise RuntimeError(
