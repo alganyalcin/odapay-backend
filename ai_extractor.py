@@ -23,6 +23,9 @@ GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.8-flash",
     "gemini-3.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
 ]
 
 # Bu durum kodlarında "tekrar dene / başka modele geç" mantıklı.
