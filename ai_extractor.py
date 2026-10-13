@@ -20,9 +20,9 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 # Sırayla denenecek modeller. İlki asıl model, diğerleri yedek.
 # Son eleman tekrar başa dönülerek bir kez daha denenir (toplam 4 deneme).
 GEMINI_MODELS = [    
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash",
     "gemini-3.6-flash",
 ]
 
