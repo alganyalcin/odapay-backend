@@ -14,23 +14,23 @@ import json
 import time
 import base64
 import requests
-from io import BytesIO
-from PIL import Image
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # Sırayla denenecek modeller. İlki asıl model, diğerleri yedek.
-# Son eleman tekrar başa dönülerek bir kez daha denenir (toplam 4 deneme).
-GEMINI_MODELS = [    
-    "gemini-flash-latest",
-    "gemini-pro-latest"
+# Hepsi sırayla denenir, sonra ilk ikisi bir kez daha (toplam 7 deneme).
+GEMINI_MODELS = [
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",       # Google'ın o anki en yeni Flash modeline işaret eden takma ad
+    "gemini-flash-lite-latest",  # daha hafif model, son çare yedek
 ]
+# Not: Pro modeller (gemini-pro-latest vb.) Nisan 2026'dan beri ücretsiz katmanda yok,
+# bu yüzden listeye eklenmedi.
 
-# Bu durum kodlarında "tekrar dene / başka modele geç" mantıklı.
-# 404: model adı bulunamadı (kaldırılmış olabilir), sıradakine geçeriz.
-RETRYABLE_STATUS = {404, 429, 500, 502, 503, 504}
-
-REQUEST_TIMEOUT = 30  # saniye, deneme başına
+REQUEST_TIMEOUT = 30  # saniye, deneme başına (en fazla)
+TOTAL_DEADLINE = 80  # saniye, tüm denemeler için toplam üst sınır
 
 PROMPT = """Bu bir market fişi fotoğrafı. Fişteki her ürünü ve o ürünün toplam fiyatını (TL) çıkar.
 Kurallar:
@@ -54,21 +54,10 @@ RESPONSE_SCHEMA = {
     },
 }
 
-def _compress_image(image_bytes: bytes) -> bytes:
-    """Orijinal kamera fotoğrafını max 1024x1024 boyutuna ve %75 JPEG kalitesine düşürür."""
-    with Image.open(BytesIO(image_bytes)) as img:
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        
-        # En-boy oranını koruyarak maksimum 1024x1024'e sığdır
-        img.thumbnail((1024, 1024))
-        
-        out = BytesIO()
-        img.save(out, format="JPEG", quality=75)
-        return out.getvalue()
 
 def _model_url(model: str) -> str:
     return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
 
 def _clean_json_text(text: str) -> str:
     """Bazen model JSON'u ```json ... ``` bloğu içine sarabiliyor, temizler."""
@@ -80,10 +69,9 @@ def _clean_json_text(text: str) -> str:
         cleaned = cleaned.strip()
     return cleaned
 
-def _call_gemini(image_bytes: bytes, model: str) -> list[dict]:
-    # Görseli Gemini'ye göndermeden ÖNCE sıkıştır
-    compressed_bytes = _compress_image(image_bytes)
-    encoded_image = base64.b64encode(compressed_bytes).decode("utf-8")
+
+def _call_gemini(image_bytes: bytes, model: str, timeout: float) -> list[dict]:
+    encoded_image = base64.b64encode(image_bytes).decode("utf-8")
 
     payload = {
         "contents": [
@@ -97,7 +85,7 @@ def _call_gemini(image_bytes: bytes, model: str) -> list[dict]:
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": RESPONSE_SCHEMA,
-            "temperature": 0.2,  # Katı şema zorlamasındaki 503 riskini azaltmak için 0 yerine 0.2 yapıldı[cite: 4]
+            "temperature": 0,  # tutarlılık için rastgeleliği kapat
             "maxOutputTokens": 4096,
         },
     }
@@ -109,7 +97,7 @@ def _call_gemini(image_bytes: bytes, model: str) -> list[dict]:
             "Content-Type": "application/json",
         },
         json=payload,
-        timeout=REQUEST_TIMEOUT,
+        timeout=timeout,
     )
     response.raise_for_status()
     result = response.json()
@@ -125,35 +113,48 @@ def _call_gemini(image_bytes: bytes, model: str) -> list[dict]:
         raise RuntimeError("Yapay zeka beklenmeyen bir format döndürdü")
     return items
 
+
 def extract_items_from_image(image_bytes: bytes) -> list[dict]:
     """Fiş fotoğrafını Gemini'ye gönderir, ürün adı + fiyat listesini döndürür.
 
     Geçici hatalarda (503 meşgul, 429 limit, zaman aşımı, bozuk JSON) sıradaki
-    modele geçerek yeniden dener. Kalıcı hatalarda (yanlış API anahtarı gibi)
-    boşuna beklemeden hemen hata verir.
+    modele geçerek, giderek uzayan aralıklarla yeniden dener (en fazla
+    TOTAL_DEADLINE saniye).
+    Bir model kalıcı hata verirse (örn. ücretsiz katmanda yok) beklemeden sıradakine
+    geçer. Her deneme loglanır.
     """
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY ortam değişkeni ayarlanmamış")
 
-    attempt_models = GEMINI_MODELS + [GEMINI_MODELS[0]]
+    attempt_models = GEMINI_MODELS + GEMINI_MODELS[:2]  # tüm modeller, sonra ilk ikisi bir kez daha
     last_error: Exception | None = None
+    started = time.monotonic()
+    attempts_made = 0
 
     for model in attempt_models:
+        remaining = TOTAL_DEADLINE - (time.monotonic() - started)
+        if remaining <= 5:
+            break
+        attempts_made += 1
         try:
-            return _call_gemini(image_bytes, model)
+            result = _call_gemini(image_bytes, model, min(REQUEST_TIMEOUT, remaining))
+            print(f"[gemini] OK model={model} deneme={attempts_made}", flush=True)
+            return result
         except requests.exceptions.HTTPError as e:
             last_error = e
             status = e.response.status_code if e.response is not None else None
-            if status in RETRYABLE_STATUS:
-                time.sleep(3)  # 1.5 saniyeden 3 saniyeye çıkarıldı[cite: 4]
-                continue
-            # 400/401/403 gibi kalıcı hatalar: tekrar denemenin anlamı yok
-            raise RuntimeError(f"Yapay zeka servisi hata döndürdü ({status}): {e}")
+            print(f"[gemini] HATA model={model} deneme={attempts_made} status={status}", flush=True)
+            if status in (429, 500, 502, 503, 504):
+                # geçici yoğunluk/limit: kısa bekle, sıradaki modele geç
+                time.sleep(min(2 * attempts_made, 6))
+            # 400/401/403/404: bu model için kalıcı sorun, beklemeden sıradaki modele geç
+            continue
         except (json.JSONDecodeError, RuntimeError, requests.exceptions.RequestException) as e:
             last_error = e
-            time.sleep(2)  # 1 saniyeden 2 saniyeye çıkarıldı[cite: 4]
+            print(f"[gemini] HATA model={model} deneme={attempts_made} {type(e).__name__}", flush=True)
+            time.sleep(1)
             continue
 
     raise RuntimeError(
-        f"Yapay zeka cevabı alınamadı ({len(attempt_models)} denemeden sonra): {last_error}"
+        f"Yapay zeka cevabı alınamadı ({attempts_made} denemeden sonra): {last_error}"
     )
