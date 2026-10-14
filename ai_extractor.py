@@ -118,10 +118,9 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
     """Fiş fotoğrafını Gemini'ye gönderir, ürün adı + fiyat listesini döndürür.
 
     Geçici hatalarda (503 meşgul, 429 limit, zaman aşımı, bozuk JSON) sıradaki
-    modele geçerek, giderek uzayan aralıklarla yeniden dener (en fazla
-    TOTAL_DEADLINE saniye).
-    Bir model kalıcı hata verirse (örn. ücretsiz katmanda yok) beklemeden sıradakine
-    geçer. Her deneme loglanır.
+    modele geçerek yeniden dener (en fazla TOTAL_DEADLINE saniye). Aynı model
+    ikinci kez denenecekse önce kısa bir süre beklenir.
+    Her deneme loglanır.
     """
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY ortam değişkeni ayarlanmamış")
@@ -131,7 +130,13 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
     started = time.monotonic()
     attempts_made = 0
 
+    tried: set[str] = set()
+
     for model in attempt_models:
+        if model in tried:
+            # Aynı modeli ikinci kez deniyoruz: Google'a biraz nefes aldır.
+            time.sleep(3)
+        tried.add(model)
         remaining = TOTAL_DEADLINE - (time.monotonic() - started)
         if remaining <= 5:
             break
@@ -144,10 +149,8 @@ def extract_items_from_image(image_bytes: bytes) -> list[dict]:
             last_error = e
             status = e.response.status_code if e.response is not None else None
             print(f"[gemini] HATA model={model} deneme={attempts_made} status={status}", flush=True)
-            if status in (429, 500, 502, 503, 504):
-                # geçici yoğunluk/limit: kısa bekle, sıradaki modele geç
-                time.sleep(min(2 * attempts_made, 6))
-            # 400/401/403/404: bu model için kalıcı sorun, beklemeden sıradaki modele geç
+            # Kapasite/limit model başına ayrı tutulduğu için, başka modele geçerken
+            # beklemenin faydası yok; doğrudan sıradakini dene.
             continue
         except (json.JSONDecodeError, RuntimeError, requests.exceptions.RequestException) as e:
             last_error = e
